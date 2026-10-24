@@ -1,0 +1,128 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # publication de l'APK dans la release « apk-latest »
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APK_NAME: MesEnchainements-debug.apk
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}   # visible pour les conditions « if » des étapes de signature
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Dépendances web + synchronisation Capacitor
+        run: |
+          npm ci
+          npx cap sync android
+
+      - name: APK debug (installable directement)
+        working-directory: android
+        run: ./gradlew assembleDebug -PVERSION_CODE=${{ github.run_number }} -PVERSION_NAME=1.0.${{ github.run_number }}
+
+      - name: Nommer l'APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "$APK_NAME"
+
+      # ---- APK livré tel quel (archive: false = pas de zip ; le nom du fichier devient le nom de l'artefact)
+      - name: Artefact — APK
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ env.APK_NAME }}
+          archive: false
+
+      # ---- même APK en téléchargement direct, sans connexion GitHub (release « apk-latest » mise à jour à chaque build)
+      - name: Release « apk-latest »
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/claude/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: APK le plus récent
+          body: "Dernier build automatique (commit ${{ github.sha }}). Télécharge l'APK et installe-le sur ton Android."
+          prerelease: true
+          files: ${{ env.APK_NAME }}
+
+      # ---- build signé pour le Play Store (seulement si les secrets de signature existent)
+      - name: AAB signé (Play Store)
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+        working-directory: android
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          ./gradlew bundleRelease -PVERSION_CODE=${{ github.run_number }} -PVERSION_NAME=1.0.${{ github.run_number }} ${ADMOB_APP_ID:+-PADMOB_APP_ID=$ADMOB_APP_ID}
+          cp app/build/outputs/bundle/release/app-release.aab ../MesEnchainements-release.aab
+      - name: Artefact — AAB signé
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: MesEnchainements-release.aab
+          archive: false
+
+      # ---- émulateur Android : l'APK est installé, on navigue dedans et on prend des captures d'écran
+      - name: Activer KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Captures d'écran sur émulateur
+        continue-on-error: true   # l'APK est déjà publié plus haut : un souci d'émulateur ne le bloque pas
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            adb install -r "${{ env.APK_NAME }}"
+            node tools/emulator-shots.js screens
+
+      - name: Capture — accueil
+        if: always() && hashFiles('screens/1-accueil.png') != ''
+        uses: actions/upload-artifact@v7
+        with: { path: screens/1-accueil.png, archive: false }
+      - name: Capture — création
+        if: always() && hashFiles('screens/2-creer.png') != ''
+        uses: actions/upload-artifact@v7
+        with: { path: screens/2-creer.png, archive: false }
+      - name: Capture — éditeur
+        if: always() && hashFiles('screens/3-editeur.png') != ''
+        uses: actions/upload-artifact@v7
+        with: { path: screens/3-editeur.png, archive: false }
+      - name: Capture — fiche
+        if: always() && hashFiles('screens/4-fiche.png') != ''
+        uses: actions/upload-artifact@v7
+        with: { path: screens/4-fiche.png, archive: false }
+      - name: Capture — Premium
+        if: always() && hashFiles('screens/5-premium.png') != ''
+        uses: actions/upload-artifact@v7
+        with: { path: screens/5-premium.png, archive: false }

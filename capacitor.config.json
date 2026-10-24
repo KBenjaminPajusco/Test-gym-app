@@ -1,0 +1,11 @@
+{
+  "appId": "fr.pajusco.mesenchainements",
+  "appName": "Mes Enchaînements",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#14161c"
+  },
+  "plugins": {
+    "AdMob": {}
+  }
+}
