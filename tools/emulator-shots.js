@@ -28,6 +28,8 @@ async function cdp() {
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let id = 0; const wait = new Map();
+  // si la WebView ferme la connexion (crash, rechargement), on le dit au lieu de rester bloqué
+  ws.onclose = () => { console.log("CDP : connexion fermée"); for (const f of wait.values()) f({ result: { result: { value: null } } }); };
   ws.onmessage = (m) => {
     const d = JSON.parse(m.data);
     if (d.id) wait.get(d.id)?.(d);
@@ -39,6 +41,7 @@ async function cdp() {
 }
 const shot = (name) => { fs.writeFileSync(path.join(out, name + ".png"), execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 << 20 })); console.log("capture", name); };
 
+process.on("exit", (c) => console.log("fin du script, code", c));
 (async () => {
   adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1");
   const ev = await cdp();

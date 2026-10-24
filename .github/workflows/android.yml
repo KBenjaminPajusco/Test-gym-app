@@ -104,7 +104,8 @@ jobs:
           disable-animations: true
           script: |
             adb install -r "${{ env.APK_NAME }}"
-            node tools/emulator-shots.js screens
+            node tools/emulator-shots.js screens || echo "emulator-shots a échoué (code $?)"
+            adb logcat -d -t 400 | grep -iE "chromium|capacitor|AndroidRuntime|FATAL|console|fr.pajusco" | tail -80 || true
 
       - name: Capture — accueil
         if: always() && hashFiles('screens/1-accueil.png') != ''
