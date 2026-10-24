@@ -16,7 +16,8 @@ const Native = (() => {
     try { localStorage.setItem(K, JSON.stringify({ on, t: Date.now() })); } catch { /* stockage indisponible */ }
     applyAds(); emit();
   }
-  const plugin = (n) => cap.registerPlugin(n);
+  // sans bundler, le pont natif expose les plugins dans Capacitor.Plugins (registerPlugin n'existe pas toujours)
+  const plugin = (n) => cap.Plugins?.[n] || cap.registerPlugin?.(n);
 
   // ---------- abonnement ----------
   const periodLabel = (p) => ({ P1W: "semaine", P1M: "mois", P3M: "trimestre", P6M: "semestre", P1Y: "an" }[p] || "");
@@ -94,7 +95,7 @@ const Native = (() => {
   async function share(opts) { await plugin("Share").share(opts); }
   function onBack(handler) {
     if (!isNative) return;
-    plugin("App").addListener("backButton", () => handler());
+    try { plugin("App").addListener("backButton", () => handler()); } catch { /* le bouton Retour garde son comportement par défaut */ }
   }
   const exitApp = () => plugin("App").exitApp();
 
