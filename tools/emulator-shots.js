@@ -16,7 +16,12 @@ async function cdp() {
   adb("forward", "tcp:9222", `localabstract:webview_devtools_remote_${pid}`);
   let page;
   for (let i = 0; i < 30 && !page; i++) {
-    try { page = (await (await fetch("http://127.0.0.1:9222/json")).json()).find((t) => t.type === "page"); } catch { /* socket pas prête */ }
+    // la WebView de l'appli (https://localhost) ; la pub AdMob tourne aussi dans une WebView du même processus
+    try {
+      const pages = (await (await fetch("http://127.0.0.1:9222/json")).json()).filter((t) => t.type === "page");
+      if (i === 0 || i % 10 === 0) console.log("WebViews :", pages.map((t) => t.url).join(" | "));
+      page = pages.find((t) => /^https?:\/\/localhost/.test(t.url));
+    } catch { /* socket pas prête */ }
     if (!page) await sleep(1000);
   }
   if (!page) throw new Error("WebView introuvable");
@@ -31,8 +36,16 @@ const shot = (name) => { fs.writeFileSync(path.join(out, name + ".png"), execFil
 (async () => {
   adb("shell", "monkey", "-p", PKG, "-c", "android.intent.category.LAUNCHER", "1");
   const ev = await cdp();
-  const click = (sel) => ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (e) e.click(); return !!e; })()`);
-  const step = async (name, sel, ms = 1500) => { if (sel) console.log(sel, JSON.stringify((await click(sel)).result?.result?.value)); await sleep(ms); shot(name); };
+  // clique dès que l'élément existe (jusqu'à 20 s) ; échoue franchement s'il n'apparaît jamais
+  const click = async (sel) => {
+    for (let i = 0; i < 40; i++) {
+      const r = await ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (e) e.click(); return !!e; })()`);
+      if (r.result?.result?.value) return r;
+      await sleep(500);
+    }
+    throw new Error("élément introuvable : " + sel);
+  };
+  const step = async (name, sel, ms = 1500) => { if (sel) { await click(sel); console.log("clic", sel); } await sleep(ms); shot(name); };
   await sleep(6000); // chargement + bannière
   shot("1-accueil");
   await step("2-creer", '[data-act="create"]');
