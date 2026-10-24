@@ -28,7 +28,13 @@ async function cdp() {
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let id = 0; const wait = new Map();
-  ws.onmessage = (m) => { const d = JSON.parse(m.data); wait.get(d.id)?.(d); };
+  ws.onmessage = (m) => {
+    const d = JSON.parse(m.data);
+    if (d.id) wait.get(d.id)?.(d);
+    else if (d.method === "Runtime.exceptionThrown") console.log("JS EXCEPTION :", JSON.stringify(d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text));
+    else if (d.method === "Runtime.consoleAPICalled" && ["error", "warning"].includes(d.params.type)) console.log("CONSOLE " + d.params.type + " :", d.params.args.map((a) => a.value ?? a.description).join(" "));
+  };
+  ws.send(JSON.stringify({ id: ++id, method: "Runtime.enable" }));
   return (expr) => new Promise((res) => { const i = ++id; wait.set(i, res); ws.send(JSON.stringify({ id: i, method: "Runtime.evaluate", params: { expression: expr, awaitPromise: true, returnByValue: true } })); });
 }
 const shot = (name) => { fs.writeFileSync(path.join(out, name + ".png"), execFileSync("adb", ["exec-out", "screencap", "-p"], { maxBuffer: 64 << 20 })); console.log("capture", name); };
@@ -47,11 +53,16 @@ const shot = (name) => { fs.writeFileSync(path.join(out, name + ".png"), execFil
   };
   const step = async (name, sel, ms = 1500) => { if (sel) { await click(sel); console.log("clic", sel); } await sleep(ms); shot(name); };
   await sleep(6000); // chargement + bannière
+  const diag = await ev(`(async () => JSON.stringify({ url: location.href, native: typeof Native !== "undefined" && Native.isNative, els: typeof ELS !== "undefined" ? ELS.length : "ELS?", page: typeof state !== "undefined" ? state.page : "state?",
+    recap: document.querySelector("#page-recap")?.innerHTML.length, hidden: document.querySelector("#page-recap")?.hidden, body: document.body.innerHTML.length,
+    elementsJson: await fetch("elements.json").then((r) => r.status).catch((e) => String(e)) }))()`);
+  console.log("DIAG", diag.result?.result?.value ?? JSON.stringify(diag));
   shot("1-accueil");
   await step("2-creer", '[data-act="create"]');
   await click('[data-cdisc="GAF"]'); await sleep(300); await click('[data-capp="sol"]'); await sleep(300); await click('[data-clvl="B1"]'); await sleep(300);
   await step("3-editeur", '[data-act="docreate"]', 2500);
   await step("4-fiche", '[data-act="sheet"]', 2500);
   await step("5-premium", '[data-act="print"]');
-  process.exit(0);
-})().catch((e) => { console.error(e); process.exit(1); });
+  logcat(); process.exit(0);
+})().catch((e) => { console.error(e); logcat(); process.exit(1); });
+function logcat() { try { console.log(adb("logcat", "-d", "-s", "Capacitor:V", "Capacitor/Console:V", "chromium:E", "AndroidRuntime:E").split("\n").slice(-60).join("\n")); } catch { /* pas de logcat */ } }
